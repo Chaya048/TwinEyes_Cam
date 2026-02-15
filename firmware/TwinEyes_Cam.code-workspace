@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"name": "TwinEyes_Cam",
+			"path": "."
+		}
+	],
+	"settings": {
+		"stm32cube-ide-clangd.path": "cube"
+	}
+}
