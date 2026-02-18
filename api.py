@@ -1,8 +1,3 @@
-# ==========================================
-# 1. INSTALL DEPENDENCIES (รันครั้งแรกครั้งเดียว)
-# ==========================================
-# !pip install flask flask-cors ultralytics opencv-python-headless pyngrok requests
-
 import cv2
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
@@ -13,19 +8,16 @@ import base64
 import requests
 import threading
 import json
-from pyngrok import ngrok # แก้จาก import ngrok เป็น from pyngrok
+from pyngrok import ngrok
 
-# Setup Flask & YOLO
 app = Flask(__name__)
 CORS(app)
 
-# โหลด Model (ใช้รุ่น Nano เพื่อความเร็ว)
+# โหลด Model
 print("Loading YOLO model...")
 model = YOLO("yolov8n.pt") 
 
 # --- CONFIG ---
-# สำคัญ: ถ้าอยู่บน Colab URL นี้ต้องเป็น Public URL (เช่น ngrok)
-# แต่ถ้ารันบนเครื่องตัวเอง ใช้ Local IP ได้เลย
 CAMERA_URL = "http://192.168.1.43/stream" 
 
 STORAGE_DIR = os.path.abspath("storage")
@@ -41,16 +33,7 @@ frame_lock = threading.Lock()
 last_save_time = 0
 SAVE_COOLDOWN = 300 
 
-# ==========================================
-# 2. BACKGROUND THREAD (หัวใจสำคัญที่แก้เพิ่ม)
-# ==========================================
 def update_camera_feed():
-    """
-    ฟังก์ชันนี้จะรันตลอดเวลาใน Background เพื่อ:
-    1. อ่านภาพจากกล้อง
-    2. รัน YOLO
-    3. อัปเดต global_frame ให้พร้อมสำหรับ Web และ AI
-    """
     global global_frame, global_yolo_result, last_save_time
     
     print(f"Connecting to camera: {CAMERA_URL}")
@@ -98,13 +81,8 @@ def update_camera_feed():
         # ใส่ sleep นิดหน่อยเพื่อไม่ให้กิน CPU เกินไป (ปรับได้)
         time.sleep(0.01)
 
-# เริ่มต้น Thread ทันที
 t = threading.Thread(target=update_camera_feed, daemon=True)
 t.start()
-
-# ==========================================
-# 3. FLASK ROUTES
-# ==========================================
 
 @app.route('/video')
 def video():
@@ -123,6 +101,20 @@ def video():
             time.sleep(0.05) # Limit FPS streaming
 
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/capture', methods=['GET'])
+def capture():
+    """Route สำหรับดึงภาพล่าสุด (ใช้สำหรับ Tool)"""
+    with frame_lock:
+        if global_frame is None:
+            return "Error: No camera feed available.", 503
+        
+        # Encode เป็น JPG เพื่อส่งผ่าน HTTP
+        ret, buffer = cv2.imencode('.jpg', global_frame)
+    if ret:
+        return Response(buffer.tobytes(), mimetype='image/jpeg')
+    else:
+        return "Error encoding image.", 500
 
 @app.route('/chat', methods=['POST'])
 def chat_with_ai():
@@ -144,8 +136,6 @@ def chat_with_ai():
     if not img_b64:
         return jsonify({"reply": "Error: No camera feed available."})
 
-    # Prompt Engineering
-    # Prompt แบบกระชับและเข้าประเด็น
     system_prompt = f"""
     Role: You are a concise security guard AI monitoring a camera feed.
     
@@ -153,15 +143,14 @@ def chat_with_ai():
     
     Rules:
     1. Answer ONLY what the user asks.
-    2. Keep responses short (under 20 words if possible).
-    3. Do NOT mention technical terms like "confidence score", "bounding box", or "YOLO".
-    4. If the user asks "what do you see?", just list the main objects/people clearly.
-    5. Be direct and professional.
-    6. Always answer in User's language.
+    2. Do NOT mention technical terms like "confidence score", "bounding box", or "YOLO".
+    3. If the user asks "what do you see?", just list the main objects/people clearly.
+    4. Be direct and professional.
+    5. Always answer in User's language.
     """
 
     payload = {
-        "model": "llava:7b", 
+        "model": "gemma3:12b", 
         "messages": [
             { "role": "system", "content": system_prompt },
             { 
@@ -205,8 +194,8 @@ def chat_with_ai():
 
 # เปิด Public URL
 if __name__ == "__main__":
-    public_url = ngrok.connect(5000).public_url
-    print(f"🚀 Web App URL: {public_url}")
-    print(f"🎥 Video Stream: {public_url}/video")   
+    # public_url = ngrok.connect(5000).public_url
+    # print(f"🚀 Web App URL: {public_url}")
+    # print(f"🎥 Video Stream: {public_url}/video")   
 
-    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
