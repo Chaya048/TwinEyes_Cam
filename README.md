@@ -1,7 +1,6 @@
 # TwinEyesCam
 # Member 
-1.ชนาภา สดุดี 6610680214
-2.ชยกร ยกบุญญาธิการ 6610680222
+1.ชนาภา สดุดี 6610680214<br>2.ชยกร ยกบุญญาธิการ 6610680222
 
 # Camera
 PlatformIO 
@@ -10,7 +9,6 @@ PlatformIO
 Next.js -> npx create-next-app@latest web-app 
 
 # AI
-
 
 
 # Tool
