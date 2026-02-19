@@ -8,7 +8,6 @@ import base64
 import requests
 import threading
 import json
-from pyngrok import ngrok
 import telebot
 from datetime import datetime
 
@@ -147,29 +146,31 @@ def chat_with_ai():
     # ---------------------------------------------------------
     # STEP 1: AI บรรณารักษ์ - ค้นหาไฟล์ที่ตรงกับเวลาที่ User ถาม
     # ---------------------------------------------------------
-    # ดึงรายชื่อไฟล์ทั้งหมด (เอาแค่ 50 ไฟล์ล่าสุด เพื่อไม่ให้ Prompt ยาวเกินไป)
+    # ดึงรายชื่อไฟล์มาแค่ 50 ไฟล์ล่าสุด
     try:
         saved_files = sorted(os.listdir(STORAGE_DIR))[-50:] 
         files_str = "\n".join(saved_files) if saved_files else "No files saved yet."
     except Exception as e:
         files_str = "Error reading storage."
 
-    # วันและเวลาปัจจุบัน เพื่อให้ AI รู้ Context ว่า "เมื่อคืน" คือตอนไหน
     current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     router_prompt = f"""
-    You are an intelligent file router. Current system time is {current_time_str}.
-    The user is asking a question about a camera feed: "{user_question}"
+    You are a professional security file dispatcher. 
+    Current System Time: {current_time_str}
+    User Question: "{user_question}"
     
     Here is a list of available image files (format: person_YYYY-MM-DD_HH-MM-SS.jpg):
     {files_str}
     
-    TASK:
-    - If the user asks about the PRESENT/NOW, reply EXACTLY with the word "LIVE".
-    - If the user asks about the PAST (e.g., last night, 10 PM), find the closest matching filename from the list and reply with EXACTLY that filename.
-    - If they ask about the past but no file is close to that time, reply "NOT_FOUND".
-    
-    Reply with ONLY the filename, "LIVE", or "NOT_FOUND". Do not add any other words.
+    DECISION RULES:
+    1. LIVE: Choose this ONLY if the user asks about "now", "current", "live", "at the moment", or "right now".
+    2. FILENAME: If the user asks about a specific time (e.g., "10 mins ago", "last night", "at 8 PM"), find the file with the timestamp CLOSEST to that request.
+    3. GENERAL: Choose this if the user is just saying hello, asking a general question, or anything NOT related to looking at a camera/time.
+    4. NOT_FOUND: Choose this only if they ask for a past time but the file list is empty or no files match that period.
+
+    CRITICAL: You must reason internally: Does the user want the present or the past?
+    Reply with ONLY the filename, "LIVE", "GENERAL", or "NOT_FOUND". Do not add any other words. No explanation.
     """
 
     router_payload = {
@@ -206,6 +207,9 @@ def chat_with_ai():
                 
     elif selected_file == "NOT_FOUND":
         return jsonify({"reply": "ไม่พบข้อมูลภาพที่มีคนในช่วงเวลาที่คุณถามหาครับ (อาจจะไม่มีคนเดินผ่านเลยในเวลานั้น)"})
+    
+    elif selected_file == "GENERAL":
+        system_context = "User asked a general question not related to the camera feed. No image to show."
         
     else:
         # ดึงภาพจาก Storage ตามที่ AI เลือก
@@ -223,23 +227,45 @@ def chat_with_ai():
     # STEP 3: AI รปภ. - วิเคราะห์รูปภาพแล้วตอบ User
     # ---------------------------------------------------------
     guard_prompt = f"""
-    Role: You are a concise, professional security AI.
+    Role: You are an Elite AI Security Specialist in a high-tech command center. You are vigilant, professional, and observant.
+
+    Instructions:
+    1. Multi-Functional Response: 
+    - If user asked about an image: Act as a CCTV Analyst. Describe the scene, people, objects, and actions with professional precision. Focus on "Who, What, Where, and Activity."
+    - If user asked a general question, not about an image: Act as a knowledgeable Security Assistant. Answer general questions or provide information directly and helpfully.
+
+    2. Language & Tone:
+    - Always respond in the SAME LANGUAGE as the user. If the user asks in Thai, respond in Thai. If they ask in English, respond in English.
+    - Tone: Professional, alert, yet approachable. Do not use robotic jargon like "bounding boxes," "AI models," or "confidence scores."
+
+    3. Detail & Conciseness:
+    - Image Analysis: Be descriptive but efficient. Provide enough detail to paint a clear picture of the visual evidence without being overly wordy.
+    - General Queries: Provide direct and accurate answers. Keep it "Goldilocks style"—neither too short nor too long.
+
     Context: {system_context}
-    
-    Rules:
-    1. Answer the user's question based ONLY on the provided image.
-    2. Answer in Thai language.
-    3. Keep it brief, natural, and friendly. Do not mention bounding boxes, AI mechanics, or confidence scores.
+
+    Example Style (Image): "Area monitored. I see one person in a black jacket standing near the entrance. They are looking at a mobile device. The area is otherwise clear. Standing by."
+    Example Style (General): "Acknowledged. I can certainly help you with that information. [Insert direct answer]. Is there anything else you need me to monitor?"
     """
 
-    vision_payload = {
-        "model": "gemma3:4b",
-        "messages": [
-            { "role": "system", "content": guard_prompt },
-            { "role": "user", "content": user_question, "images": [img_b64] }
-        ],
-        "stream": False
-    }
+    if selected_file == "GENERAL":
+        vision_payload = {
+            "model": "gemma3:4b",
+            "messages": [
+                { "role": "system", "content": guard_prompt },
+                { "role": "user", "content": user_question}
+            ],
+            "stream": False
+        }
+    else:
+        vision_payload = {
+            "model": "gemma3:4b",
+            "messages": [
+                { "role": "system", "content": guard_prompt },
+                { "role": "user", "content": user_question, "images": [img_b64] }
+            ],
+            "stream": False
+        }
 
     print("👁️ Step 2: Asking AI to analyze the image...")
     try:
@@ -247,13 +273,6 @@ def chat_with_ai():
         ai_reply = final_response.get('message', {}).get('content', "ไม่สามารถวิเคราะห์ภาพได้ครับ")
     except Exception as e:
         ai_reply = f"Vision Error: {str(e)}"
-
-    # chat_history.append({
-    #     'role': 'user',
-    #     'content': user_question,
-    #     'role': 'assistant',
-    #     'content': ai_reply
-    # })
 
     return jsonify({"reply": ai_reply})
 
