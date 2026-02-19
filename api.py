@@ -10,7 +10,7 @@ import threading
 import json
 from pyngrok import ngrok
 import telebot
-from telebot.types import ReplyKeyboardMarkup, BotCommand
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
@@ -24,7 +24,7 @@ bot = telebot.TeleBot("8404110212:AAF87c4lqYeUGO2uFFkv3FiReKRvgPiGUUo")
 CHAT_ID = '7703000808'
 
 # --- CONFIG ---
-# CAMERA_URL = "http://192.168.1.43/stream" 
+# CAMERA_URL = "http://192.168.1.43/stream" # WiFi หอ
 CAMERA_URL = 'http://172.20.10.2/stream'
 
 STORAGE_DIR = os.path.abspath("storage")
@@ -79,7 +79,8 @@ def update_camera_feed():
         if len(detections) > 0:
             current_time = time.time()
             if current_time - last_save_time > SAVE_COOLDOWN:
-                filename = f"person_{int(current_time)}.jpg"
+                time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                filename = f"person_{time_str}.jpg"
                 file_path = os.path.join(STORAGE_DIR, filename)
                 cv2.imwrite(file_path, annotated_frame)
                 print(f"Auto-saved: {filename}")
@@ -87,8 +88,7 @@ def update_camera_feed():
 
                 # ส่งรูปไป Telegram
                 bot.send_message(CHAT_ID, "🚨 ตรวจพบคนในกล้อง A!")
-                cv2.imwrite("alert.jpg", annotated_frame)
-                with open("alert.jpg", "rb") as photo:
+                with open(file_path, "rb") as photo:
                   bot.send_photo(CHAT_ID, photo)
         
         time.sleep(0.01)
@@ -149,16 +149,18 @@ def chat_with_ai():
         return jsonify({"reply": "Error: No camera feed available."})
 
     system_prompt = f"""
-    Role: You are a concise security guard AI monitoring a camera feed.
+    Act as an AI Security Specialist monitoring a high-tech command center. Your role is to assist the user by analyzing provided images (CCTV feeds) or answering general inquiries with the vigilance and precision of a professional security guard.
+
+    Operational Guidelines:
+    1. Language: Always respond in the SAME LANGUAGE as the user (If user speaks Thai, reply in Thai).
+    2. Image Analysis: When a photo is provided, describe the scene clearly and accurately (Focus on: Who, What, Where, and any notable actions). 
+    3. Conciseness: Be direct and observant. Avoid "fluff" or overly long explanations. Keep it professional and "just enough" detail.
+    4. Tone: Alert, grounded, and helpful. You are a professional guard reporting facts, not a creative storyteller.
+
+    Example Response: 
+    "Area monitored. I observe one person in a blue shirt standing by the gate. They appear to be waiting. No suspicious activity detected. Standing by for instructions."
     
     Context from YOLO System: {json.dumps(current_detections)}
-    
-    Rules:
-    1. Answer ONLY what the user asks.
-    2. Do NOT mention technical terms like "confidence score", "bounding box", or "YOLO".
-    3. If the user asks "what do you see?", just list the main objects/people clearly.
-    4. Be direct and professional.
-    5. Always answer in User's language.
     """
 
     payload = {
