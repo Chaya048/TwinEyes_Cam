@@ -2,8 +2,6 @@
 #include "esp_camera.h"
 #include "esp_http_server.h"
 #include "img_converters.h"
-#include "soc/rtc_cntl_reg.h"
-#include "soc/soc.h"
 #include <Arduino.h>
 #include <WiFi.h>
 
