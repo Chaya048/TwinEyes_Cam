@@ -3,7 +3,7 @@
 1.ชนาภา สดุดี 6610680214<br>2.ชยกร ยกบุญญาธิการ 6610680222
 
 # Camera
-PlatformIO 
+T-SIMCAM
 
 # Wab_App
 Next.js -> npx create-next-app@latest web-app 
@@ -12,4 +12,4 @@ Next.js -> npx create-next-app@latest web-app
 
 
 # Tool
--> Visual Studio Code
+-> Visual Studio Code (สำหรับ flash firmware ต้องลง Extension PlatformIO ด้วย)
