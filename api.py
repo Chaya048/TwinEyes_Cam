@@ -31,7 +31,6 @@ STORAGE_DIR = os.path.abspath("storage")
 if not os.path.exists(STORAGE_DIR):
     os.makedirs(STORAGE_DIR)
 
-# --- GLOBAL STATE ---
 global_frame = None       
 global_yolo_result = [] 
 frame_lock = threading.Lock()
@@ -40,8 +39,10 @@ frame_lock = threading.Lock()
 last_save_time = 0
 SAVE_COOLDOWN = 300 
 
+logs_system = []
+
 def update_camera_feed():
-    global global_frame, global_yolo_result, last_save_time
+    global global_frame, global_yolo_result, last_save_time, logs_system
     
     print(f"Connecting to camera: {CAMERA_URL}")
     cap = cv2.VideoCapture(CAMERA_URL)
@@ -56,7 +57,7 @@ def update_camera_feed():
             continue
 
         # รัน YOLO
-        results = model.predict(frame, classes=[0], conf=0.55, verbose=False)
+        results = model.predict(frame, classes=[0], conf=0.65, verbose=False)
         
         # ดึงข้อมูล Detection เพื่อส่งให้ AI
         detections = []
@@ -90,6 +91,9 @@ def update_camera_feed():
                 bot.send_message(CHAT_ID, "🚨 ตรวจพบคนในกล้อง A!")
                 with open(file_path, "rb") as photo:
                   bot.send_photo(CHAT_ID, photo)
+
+                # แจ้งเตือนหน้าเว็บ
+                logs_system.append({"event": "พบคนในกล้อง A", "time": datetime.now().strftime("%H:%M:%S")})
         
         time.sleep(0.01)
 
@@ -128,88 +132,134 @@ def capture():
     else:
         return "Error encoding image.", 500
 
+@app.route('/logs', methods=['GET'])
+def logs():
+    """Route สำหรับดึง Log ล่าสุด (ใช้สำหรับ Tool)"""
+    return jsonify({
+    "logs": logs_system[-1:]
+    })
+
+    
 @app.route('/chat', methods=['POST'])
 def chat_with_ai():
-    """Route สำหรับคุยกับ AI"""
     user_question = request.json.get('message')
     
-    img_b64 = ""
-    current_detections = []
-    
-    # ดึงข้อมูลล่าสุดจาก Global State
-    with frame_lock:
-        if global_frame is not None:
-            # Resize ภาพก่อนส่ง AI เพื่อลด Latency (สำคัญมากบน Colab)
-            resized_frame = cv2.resize(global_frame, (640, 480))
-            _, buffer = cv2.imencode('.jpg', resized_frame)
-            img_b64 = base64.b64encode(buffer).decode('utf-8')
-            current_detections = global_yolo_result
-    
-    if not img_b64:
-        return jsonify({"reply": "Error: No camera feed available."})
+    # ---------------------------------------------------------
+    # STEP 1: AI บรรณารักษ์ - ค้นหาไฟล์ที่ตรงกับเวลาที่ User ถาม
+    # ---------------------------------------------------------
+    # ดึงรายชื่อไฟล์ทั้งหมด (เอาแค่ 50 ไฟล์ล่าสุด เพื่อไม่ให้ Prompt ยาวเกินไป)
+    try:
+        saved_files = sorted(os.listdir(STORAGE_DIR))[-50:] 
+        files_str = "\n".join(saved_files) if saved_files else "No files saved yet."
+    except Exception as e:
+        files_str = "Error reading storage."
 
-    system_prompt = f"""
-    Act as an AI Security Specialist monitoring a high-tech command center. Your role is to assist the user by analyzing provided images (CCTV feeds) or answering general inquiries with the vigilance and precision of a professional security guard.
+    # วันและเวลาปัจจุบัน เพื่อให้ AI รู้ Context ว่า "เมื่อคืน" คือตอนไหน
+    current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    Operational Guidelines:
-    1. Language: Always respond in the SAME LANGUAGE as the user (If user speaks Thai, reply in Thai).
-    2. Image Analysis: When a photo is provided, describe the scene clearly and accurately (Focus on: Who, What, Where, and any notable actions). 
-    3. Conciseness: Be direct and observant. Avoid "fluff" or overly long explanations. Keep it professional and "just enough" detail.
-    4. Tone: Alert, grounded, and helpful. You are a professional guard reporting facts, not a creative storyteller.
-
-    Example Response: 
-    "Area monitored. I observe one person in a blue shirt standing by the gate. They appear to be waiting. No suspicious activity detected. Standing by for instructions."
+    router_prompt = f"""
+    You are an intelligent file router. Current system time is {current_time_str}.
+    The user is asking a question about a camera feed: "{user_question}"
     
-    Context from YOLO System: {json.dumps(current_detections)}
+    Here is a list of available image files (format: person_YYYY-MM-DD_HH-MM-SS.jpg):
+    {files_str}
+    
+    TASK:
+    - If the user asks about the PRESENT/NOW, reply EXACTLY with the word "LIVE".
+    - If the user asks about the PAST (e.g., last night, 10 PM), find the closest matching filename from the list and reply with EXACTLY that filename.
+    - If they ask about the past but no file is close to that time, reply "NOT_FOUND".
+    
+    Reply with ONLY the filename, "LIVE", or "NOT_FOUND". Do not add any other words.
     """
 
-    payload = {
-        "model": "gemma3:12b", 
+    router_payload = {
+        "model": "gemma3:4b", 
+        "messages": [{"role": "user", "content": router_prompt}],
+        "stream": False
+    }
+
+    print("🕵️‍♂️ Step 1: Asking AI to find the right image...")
+    try:
+        router_response = requests.post("http://localhost:11434/api/chat", json=router_payload).json()
+        selected_file = router_response.get('message', {}).get('content', '').strip()
+    except Exception as e:
+        return jsonify({"reply": f"Router Error: {str(e)}"})
+
+    print(f"📁 AI Selected File: {selected_file}")
+
+    # ---------------------------------------------------------
+    # STEP 2: เตรียมรูปภาพ (จากกล้องสด หรือ จากไฟล์ที่เซฟไว้)
+    # ---------------------------------------------------------
+    img_b64 = ""
+    system_context = ""
+
+    if selected_file == "LIVE":
+        # ดึงภาพสด
+        with frame_lock:
+            if global_frame is not None:
+                resized_frame = cv2.resize(global_frame, (640, 480))
+                _, buffer = cv2.imencode('.jpg', resized_frame)
+                img_b64 = base64.b64encode(buffer).decode('utf-8')
+                system_context = f"Showing LIVE camera. Current YOLO detection: {json.dumps(global_yolo_result)}"
+            else:
+                return jsonify({"reply": "กล้องสดไม่มีสัญญาณครับ"})
+                
+    elif selected_file == "NOT_FOUND":
+        return jsonify({"reply": "ไม่พบข้อมูลภาพที่มีคนในช่วงเวลาที่คุณถามหาครับ (อาจจะไม่มีคนเดินผ่านเลยในเวลานั้น)"})
+        
+    else:
+        # ดึงภาพจาก Storage ตามที่ AI เลือก
+        file_path = os.path.join(STORAGE_DIR, selected_file)
+        if os.path.exists(file_path):
+            img = cv2.imread(file_path)
+            resized_frame = cv2.resize(img, (640, 480))
+            _, buffer = cv2.imencode('.jpg', resized_frame)
+            img_b64 = base64.b64encode(buffer).decode('utf-8')
+            system_context = f"Showing recorded image from past: {selected_file}."
+        else:
+            return jsonify({"reply": f"เกิดข้อผิดพลาด: AI เลือกไฟล์ {selected_file} แต่หาไฟล์ไม่เจอในเครื่อง"})
+
+    # ---------------------------------------------------------
+    # STEP 3: AI รปภ. - วิเคราะห์รูปภาพแล้วตอบ User
+    # ---------------------------------------------------------
+    guard_prompt = f"""
+    Role: You are a concise, professional security AI.
+    Context: {system_context}
+    
+    Rules:
+    1. Answer the user's question based ONLY on the provided image.
+    2. Answer in Thai language.
+    3. Keep it brief, natural, and friendly. Do not mention bounding boxes, AI mechanics, or confidence scores.
+    """
+
+    vision_payload = {
+        "model": "gemma3:4b",
         "messages": [
-            { "role": "system", "content": system_prompt },
-            { 
-                "role": "user", 
-                "content": user_question, 
-                "images": [img_b64] 
-            }
+            { "role": "system", "content": guard_prompt },
+            { "role": "user", "content": user_question, "images": [img_b64] }
         ],
         "stream": False
     }
 
+    print("👁️ Step 2: Asking AI to analyze the image...")
     try:
-        # ยิงไปที่ Local Ollama
-        print("Sending to Ollama...")
-        
-        # เพิ่ม timeout เผื่อเครื่องประมวลผลช้า (30-60 วินาที)
-        response = requests.post("http://localhost:11434/api/chat", json=payload, timeout=60).json()
-        
-        # --- จุดที่แก้: ปริ้นท์ออกมาดูเลยว่า Ollama ส่งอะไรกลับมา ---
-        print("🔴 Debug Ollama Response:", response) 
-
-        if 'error' in response:
-            ai_reply = f"System Error: {response['error']}"
-        else:
-            ai_reply = response.get('message', {}).get('content', "No content received.")
-
-    except requests.exceptions.Timeout:
-        ai_reply = "Error: AI took too long to respond (Timeout)."
+        final_response = requests.post("http://localhost:11434/api/chat", json=vision_payload).json()
+        ai_reply = final_response.get('message', {}).get('content', "ไม่สามารถวิเคราะห์ภาพได้ครับ")
     except Exception as e:
-        ai_reply = f"Error connecting to AI: {str(e)}"
-        print(f"🔴 Exception details: {e}")
+        ai_reply = f"Vision Error: {str(e)}"
+
+    # chat_history.append({
+    #     'role': 'user',
+    #     'content': user_question,
+    #     'role': 'assistant',
+    #     'content': ai_reply
+    # })
 
     return jsonify({"reply": ai_reply})
-
 
 # ==========================================
 # 4. RUN SERVER
 # ==========================================
-# ใส่ Authtoken ของ ngrok ที่นี่ (สมัครฟรีที่ ngrok.com)
-# ngrok.set_auth_token("YOUR_NGROK_TOKEN")
 
-# เปิด Public URL
 if __name__ == "__main__":
-    # public_url = ngrok.connect(5000).public_url
-    # print(f"🚀 Web App URL: {public_url}")
-    # print(f"🎥 Video Stream: {public_url}/video")   
-
     app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
