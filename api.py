@@ -9,6 +9,8 @@ import requests
 import threading
 import json
 from pyngrok import ngrok
+import telebot
+from telebot.types import ReplyKeyboardMarkup, BotCommand
 
 app = Flask(__name__)
 CORS(app)
@@ -17,16 +19,21 @@ CORS(app)
 print("Loading YOLO model...")
 model = YOLO("yolov8n.pt") 
 
+# Telegram Bot Setup
+bot = telebot.TeleBot("8404110212:AAF87c4lqYeUGO2uFFkv3FiReKRvgPiGUUo")
+CHAT_ID = '7703000808'
+
 # --- CONFIG ---
-CAMERA_URL = "http://192.168.1.43/stream" 
+# CAMERA_URL = "http://192.168.1.43/stream" 
+CAMERA_URL = 'http://172.20.10.2/stream'
 
 STORAGE_DIR = os.path.abspath("storage")
 if not os.path.exists(STORAGE_DIR):
     os.makedirs(STORAGE_DIR)
 
 # --- GLOBAL STATE ---
-global_frame = None       # ภาพดิบ (หรือภาพวาดกรอบแล้ว)
-global_yolo_result = []   # ผล Detection
+global_frame = None       
+global_yolo_result = [] 
 frame_lock = threading.Lock()
 
 # ตัวแปรควบคุมการเซฟภาพ
@@ -77,8 +84,13 @@ def update_camera_feed():
                 cv2.imwrite(file_path, annotated_frame)
                 print(f"Auto-saved: {filename}")
                 last_save_time = current_time
+
+                # ส่งรูปไป Telegram
+                bot.send_message(CHAT_ID, "🚨 ตรวจพบคนในกล้อง A!")
+                cv2.imwrite("alert.jpg", annotated_frame)
+                with open("alert.jpg", "rb") as photo:
+                  bot.send_photo(CHAT_ID, photo)
         
-        # ใส่ sleep นิดหน่อยเพื่อไม่ให้กิน CPU เกินไป (ปรับได้)
         time.sleep(0.01)
 
 t = threading.Thread(target=update_camera_feed, daemon=True)
