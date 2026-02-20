@@ -6,8 +6,7 @@
 T-SIMCAM
 
 # Wab App
-Frontend: Next.js -> npx create-next-app@latest web-app 
-Styling: Tailwind CSS
+Frontend: Next.js -> npx create-next-app@latest web-app<br>Styling: Tailwind CSS
 
 # Web API
   Python Library
