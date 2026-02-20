@@ -1,5 +1,5 @@
 // types.ts
-export type Message = {
+  export type Message = {
     role: 'user' | 'ai';
     content: string;
   };

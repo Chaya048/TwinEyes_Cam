@@ -5,7 +5,7 @@ export async function POST(request: Request) {
   try {
     const { message } = await request.json();
 
-    // 1. ใส่ URL (ขอ Link ngrok)
+    // 1. ใส่ URL 
     const friendUrl = 'http://172.20.10.7:5000/chat'; 
 
     const response = await fetch(friendUrl, {

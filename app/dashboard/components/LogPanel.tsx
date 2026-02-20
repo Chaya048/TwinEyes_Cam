@@ -25,7 +25,3 @@ export default function LogPanel({ logs, isDarkMode }: LogPanelProps) {
   );
 }
 
-
-
-
-

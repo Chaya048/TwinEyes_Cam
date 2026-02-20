@@ -1,32 +1,28 @@
 'use client';
 
-import Link from 'next/link';
-
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState(''); // เก็บข้อความ Error
+  const [error, setError] = useState(''); //เก็บข้อความ Error
   const router = useRouter();
 
   const users: { [key: string]: string } = {
     'jeng': '1234',
     'pp': '3489'
   };
-
+  
+  //ทำงานเมื่อผู้ใช้กดปุ่ม Login หรือกด Enter
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setError(''); // รีเซ็ต Error ทุกครั้งที่กด Login
 
-    // ตรวจสอบว่ากรอกข้อมูลครบไหม (เช็คเองแทน Required ของ Browser)
     if (!username || !password) {
       setError('Information not found');
       return;
     }
-
-    // ตรวจสอบ Username และ Password
     if (users[username] && users[username] === password) {
       console.log('Login Success! User:', username);
       router.push('/dashboard');
@@ -73,12 +69,6 @@ export default function LoginPage() {
             }`}
             placeholder="Enter password"
           />
-        </div>
-
-        <div className="flex justify-end mb-6">
-          <Link href="/forget" className="text-sm text-blue-600 hover:text-blue-800 hover:underline">
-              forgot your password?
-          </Link>
         </div>
 
         <button
